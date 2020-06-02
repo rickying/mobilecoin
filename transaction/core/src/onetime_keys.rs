@@ -18,6 +18,7 @@ use curve25519_dalek::{
 };
 use mc_crypto_keys::{RistrettoPrivate, RistrettoPublic};
 use mc_util_from_random::FromRandom;
+use mc_util_serial::ReprBytes32;
 use rand_core::{CryptoRng, RngCore};
 
 const G: RistrettoPoint = RISTRETTO_BASEPOINT_POINT;

@@ -6,13 +6,12 @@
 //! represents an element of \\(\mathbb Z / \ell\\).
 
 use super::Error;
-use core::fmt;
+use core::{convert::TryFrom, fmt};
 use curve25519_dalek::scalar::Scalar;
 use mc_crypto_digestible::Digestible;
 use mc_util_from_random::FromRandom;
-use mc_util_repr_bytes::{
-    derive_core_cmp_from_as_ref, derive_prost_message_from_repr_bytes,
-    derive_try_from_slice_from_repr_bytes, typenum::U32, GenericArray, ReprBytes,
+use mc_util_serial::{
+    deduce_core_traits_from_public_bytes, prost_message_helper32, try_from_helper32, ReprBytes32,
 };
 use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -68,17 +67,8 @@ impl AsRef<[u8; 32]> for CurveScalar {
     }
 }
 
-impl From<&[u8; 32]> for CurveScalar {
-    #[inline]
-    fn from(src: &[u8; 32]) -> Self {
-        Self {
-            scalar: Scalar::from_bytes_mod_order(*src),
-        }
-    }
-}
-
-// Implements Ord, PartialOrd, PartialEq, Hash.
-derive_core_cmp_from_as_ref!(CurveScalar, [u8; 32]);
+// Implements Ord, PartialOrd, PartialEq, Hash. Requires AsRef<[u8;32]>.
+deduce_core_traits_from_public_bytes! { CurveScalar }
 
 impl AsRef<[u8]> for CurveScalar {
     #[inline]
@@ -100,14 +90,15 @@ impl Into<Scalar> for CurveScalar {
     }
 }
 
-impl ReprBytes for CurveScalar {
+impl ReprBytes32 for CurveScalar {
     type Error = Error;
-    type Size = U32;
-    fn to_bytes(&self) -> GenericArray<u8, U32> {
-        self.scalar.to_bytes().into()
+    fn to_bytes(&self) -> [u8; 32] {
+        self.scalar.to_bytes()
     }
-    fn from_bytes(src: &GenericArray<u8, U32>) -> Result<Self, Error> {
-        Ok(Self::from(&(*src).into()))
+    fn from_bytes(src: &[u8; 32]) -> Result<Self, Error> {
+        Ok(Self {
+            scalar: Scalar::from_bytes_mod_order(*src),
+        })
     }
 }
 
@@ -118,8 +109,10 @@ impl fmt::Debug for CurveScalar {
 }
 
 // Implements prost::Message. Requires Debug and ReprBytes32.
-derive_prost_message_from_repr_bytes!(CurveScalar);
-derive_try_from_slice_from_repr_bytes!(CurveScalar);
+prost_message_helper32! { CurveScalar }
+
+// Implements try_from<&[u8;32]> and try_from<&[u8]>. Requires ReprBytes32.
+try_from_helper32! { CurveScalar }
 
 #[cfg(test)]
 mod tests {

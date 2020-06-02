@@ -10,7 +10,7 @@ use aead::{
 };
 use core::ops::{Add, Sub};
 use failure::Fail;
-use mc_crypto_keys::{Kex, KeyError};
+use mc_crypto_keys::{KeyError, RistrettoPrivate, RistrettoPublic};
 use rand_core::{CryptoRng, RngCore};
 
 /// Error type for decryption
@@ -31,8 +31,9 @@ pub enum Error {
     WrongMagicBytes,
 }
 
-/// Trait defining the high-level interface to Crypto-Box
-pub trait CryptoBox<KexAlgo: Kex>: Default {
+/// Trait defining the high-level interface to Crypto-Box in-terms of low-level
+/// This assumes use of mc_crypto_keys::Ristretto* types, but could be more generic
+pub trait CryptoBox: Default {
     type FooterSize: ArrayLength<u8>;
 
     // Required functions
@@ -44,7 +45,7 @@ pub trait CryptoBox<KexAlgo: Kex>: Default {
     fn encrypt_in_place_detached<T: RngCore + CryptoRng>(
         &self,
         rng: &mut T,
-        key: &KexAlgo::Public,
+        key: &RistrettoPublic,
         buffer: &mut [u8],
     ) -> Result<GenericArray<u8, Self::FooterSize>, AeadError>;
 
@@ -58,7 +59,7 @@ pub trait CryptoBox<KexAlgo: Kex>: Default {
     /// - Anything is wrong with the footer (magic bytes? version code?)
     fn decrypt_in_place_detached(
         &self,
-        key: &KexAlgo::Private,
+        key: &RistrettoPrivate,
         footer: &GenericArray<u8, Self::FooterSize>,
         buffer: &mut [u8],
     ) -> Result<(), Error>;
@@ -73,7 +74,7 @@ pub trait CryptoBox<KexAlgo: Kex>: Default {
     fn encrypt<T: RngCore + CryptoRng>(
         &self,
         rng: &mut T,
-        key: &KexAlgo::Public,
+        key: &RistrettoPublic,
         plaintext: &[u8],
     ) -> Result<Vec<u8>, AeadError> {
         let mut result = Vec::<u8>::with_capacity(plaintext.len() + Self::FooterSize::USIZE);
@@ -85,7 +86,7 @@ pub trait CryptoBox<KexAlgo: Kex>: Default {
     /// Decrypt a slice pointing to the cryptogram, returning a Vec<u8> plaintext.
     ///
     /// Meant to mirror aead::decrypt
-    fn decrypt(&self, key: &KexAlgo::Private, cryptogram: &[u8]) -> Result<Vec<u8>, Error> {
+    fn decrypt(&self, key: &RistrettoPrivate, cryptogram: &[u8]) -> Result<Vec<u8>, Error> {
         let mut result = cryptogram.to_vec();
         self.decrypt_in_place(key, &mut result)?;
         Ok(result)
@@ -99,7 +100,7 @@ pub trait CryptoBox<KexAlgo: Kex>: Default {
     fn encrypt_in_place<T: RngCore + CryptoRng>(
         &self,
         rng: &mut T,
-        key: &KexAlgo::Public,
+        key: &RistrettoPublic,
         buffer: &mut impl aead::Buffer,
     ) -> Result<(), AeadError> {
         let footer = self.encrypt_in_place_detached(rng, key, buffer.as_mut())?;
@@ -117,7 +118,7 @@ pub trait CryptoBox<KexAlgo: Kex>: Default {
     /// - The mac check fails
     fn decrypt_in_place(
         &self,
-        key: &KexAlgo::Private,
+        key: &RistrettoPrivate,
         cryptogram: &mut impl aead::Buffer,
     ) -> Result<(), Error> {
         // Extract the footer from end of ciphertext, doing bounds checks
@@ -139,7 +140,7 @@ pub trait CryptoBox<KexAlgo: Kex>: Default {
     fn encrypt_fixed_length<T, L>(
         &self,
         rng: &mut T,
-        key: &KexAlgo::Public,
+        key: &RistrettoPublic,
         buffer: &GenericArray<u8, L>,
     ) -> Result<GenericArray<u8, Sum<L, Self::FooterSize>>, AeadError>
     where
@@ -158,7 +159,7 @@ pub trait CryptoBox<KexAlgo: Kex>: Default {
     /// A non-allocating counterpart to decrypt
     fn decrypt_fixed_length<L>(
         &self,
-        key: &KexAlgo::Private,
+        key: &RistrettoPrivate,
         cryptogram: &GenericArray<u8, L>,
     ) -> Result<GenericArray<u8, Diff<L, Self::FooterSize>>, Error>
     // generic_array/typenum can be really annoying...

@@ -2,12 +2,11 @@ use crate::{
     commitment::Commitment,
     ring_signature::{Error, Scalar, GENERATORS},
 };
-use core::fmt;
+use core::{convert::TryFrom, fmt};
 use curve25519_dalek::ristretto::CompressedRistretto;
 use mc_crypto_digestible::Digestible;
-use mc_util_repr_bytes::{
-    derive_core_cmp_from_as_ref, derive_prost_message_from_repr_bytes,
-    derive_try_from_slice_from_repr_bytes, typenum::U32, GenericArray, ReprBytes,
+use mc_util_serial::{
+    deduce_core_traits_from_public_bytes, prost_message_helper32, try_from_helper32, ReprBytes32,
 };
 use serde::{Deserialize, Serialize};
 
@@ -55,32 +54,26 @@ impl AsRef<[u8; 32]> for CompressedCommitment {
     }
 }
 
-impl From<&[u8; 32]> for CompressedCommitment {
-    fn from(src: &[u8; 32]) -> Self {
-        Self {
-            point: CompressedRistretto::from_slice(src),
-        }
-    }
-}
+// Implements Ord, PartialOrd, PartialEq, Hash. Requires AsRef<[u8;32]>.
+deduce_core_traits_from_public_bytes! { CompressedCommitment }
 
-// Implements Ord, PartialOrd, PartialEq, Hash.
-derive_core_cmp_from_as_ref!(CompressedCommitment, [u8; 32]);
-
-impl ReprBytes for CompressedCommitment {
+impl ReprBytes32 for CompressedCommitment {
     type Error = Error;
-    type Size = U32;
-    fn to_bytes(&self) -> GenericArray<u8, U32> {
-        self.point.to_bytes().into()
+    fn to_bytes(&self) -> [u8; 32] {
+        self.point.to_bytes()
     }
-    fn from_bytes(src: &GenericArray<u8, U32>) -> Result<Self, Error> {
+    fn from_bytes(src: &[u8; 32]) -> Result<Self, Error> {
         Ok(Self {
-            point: CompressedRistretto::from_slice(src.as_slice()),
+            point: CompressedRistretto::from_slice(src),
         })
     }
 }
 
-derive_prost_message_from_repr_bytes!(CompressedCommitment);
-derive_try_from_slice_from_repr_bytes!(CompressedCommitment);
+// Implements prost::Message. Requires Debug and ReprBytes32.
+prost_message_helper32! { CompressedCommitment }
+
+// Implements try_from<&[u8;32]> and try_from<&[u8]>. Requires ReprBytes32.
+try_from_helper32! { CompressedCommitment }
 
 #[cfg(test)]
 #[allow(non_snake_case)]

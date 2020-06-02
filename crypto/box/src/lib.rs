@@ -17,7 +17,7 @@ extern crate alloc;
 
 pub use aead::generic_array;
 
-mod hkdf_box;
+mod hkdf_blake2b_aes_128_gcm;
 mod traits;
 mod versioned;
 

@@ -9,9 +9,7 @@ use core::{
 use mc_common::{Hash, HashMap};
 use mc_crypto_digestible::Digestible;
 use mc_crypto_keys::{CompressedRistrettoPublic, RistrettoPrivate};
-use mc_util_repr_bytes::{
-    derive_prost_message_from_repr_bytes, typenum::U32, GenericArray, ReprBytes,
-};
+use mc_util_serial::{prost_message_helper32, ReprBytes32};
 use prost::Message;
 use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -358,13 +356,6 @@ impl core::convert::AsRef<[u8; 32]> for TxOutMembershipHash {
     }
 }
 
-impl core::convert::From<&[u8; 32]> for TxOutMembershipHash {
-    #[inline]
-    fn from(src: &[u8; 32]) -> Self {
-        Self(*src)
-    }
-}
-
 impl core::convert::From<[u8; 32]> for TxOutMembershipHash {
     #[inline]
     fn from(src: [u8; 32]) -> Self {
@@ -372,18 +363,17 @@ impl core::convert::From<[u8; 32]> for TxOutMembershipHash {
     }
 }
 
-impl ReprBytes for TxOutMembershipHash {
+impl ReprBytes32 for TxOutMembershipHash {
     type Error = &'static str;
-    type Size = U32;
-    fn from_bytes(src: &GenericArray<u8, U32>) -> Result<Self, &'static str> {
-        Ok(Self((*src).into()))
+    fn from_bytes(src: &[u8; 32]) -> Result<Self, &'static str> {
+        Ok(Self::from(*src))
     }
-    fn to_bytes(&self) -> GenericArray<u8, U32> {
-        self.0.into()
+    fn to_bytes(&self) -> [u8; 32] {
+        self.0
     }
 }
 
-derive_prost_message_from_repr_bytes!(TxOutMembershipHash);
+prost_message_helper32! { TxOutMembershipHash }
 
 #[cfg(test)]
 mod tests {

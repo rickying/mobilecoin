@@ -14,7 +14,7 @@ use core::convert::{TryFrom, TryInto};
 use digest::{BlockInput, Digest, FixedOutput, Input, Reset};
 use failure::Fail;
 use generic_array::typenum::Unsigned;
-use mc_crypto_keys::{Kex, KexReusablePrivate, ReprBytes};
+use mc_crypto_keys::{Kex, KexReusablePrivate, PublicKey};
 use mc_util_from_random::FromRandom;
 use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -175,44 +175,60 @@ where
         // we are running as an initiator, so extract our pubkeys and hash them in.
         match Handshake::initiator_premsg() {
             PreMessageToken::Static => {
-                initiator_identity
-                    .ok_or(HandshakeError::MissingInitiatorIdentity)?
-                    .map_bytes(|bytes| symmetric_state.mix_hash(bytes));
+                symmetric_state.mix_hash(
+                    initiator_identity
+                        .ok_or(HandshakeError::MissingInitiatorIdentity)?
+                        .as_ref(),
+                );
             }
             PreMessageToken::Ephemeral => {
-                initiator_ephemeral
-                    .ok_or(HandshakeError::MissingInitiatorEphemeral)?
-                    .map_bytes(|bytes| symmetric_state.mix_hash(bytes));
+                symmetric_state.mix_hash(
+                    initiator_ephemeral
+                        .ok_or(HandshakeError::MissingInitiatorEphemeral)?
+                        .as_ref(),
+                );
             }
             PreMessageToken::EphemeralStatic => {
-                initiator_ephemeral
-                    .ok_or(HandshakeError::MissingInitiatorEphemeral)?
-                    .map_bytes(|bytes| symmetric_state.mix_hash(bytes));
-                initiator_identity
-                    .ok_or(HandshakeError::MissingInitiatorIdentity)?
-                    .map_bytes(|bytes| symmetric_state.mix_hash(bytes));
+                symmetric_state.mix_hash(
+                    initiator_ephemeral
+                        .ok_or(HandshakeError::MissingInitiatorEphemeral)?
+                        .as_ref(),
+                );
+                symmetric_state.mix_hash(
+                    initiator_identity
+                        .ok_or(HandshakeError::MissingInitiatorIdentity)?
+                        .as_ref(),
+                );
             }
             PreMessageToken::None => {}
         }
 
         match Handshake::responder_premsg() {
             PreMessageToken::Static => {
-                responder_identity
-                    .ok_or(HandshakeError::MissingResponderIdentity)?
-                    .map_bytes(|bytes| symmetric_state.mix_hash(bytes));
+                symmetric_state.mix_hash(
+                    responder_identity
+                        .ok_or(HandshakeError::MissingResponderIdentity)?
+                        .as_ref(),
+                );
             }
             PreMessageToken::Ephemeral => {
-                responder_ephemeral
-                    .ok_or(HandshakeError::MissingResponderEphemeral)?
-                    .map_bytes(|bytes| symmetric_state.mix_hash(bytes));
+                symmetric_state.mix_hash(
+                    responder_ephemeral
+                        .ok_or(HandshakeError::MissingResponderEphemeral)?
+                        .as_ref(),
+                );
             }
             PreMessageToken::EphemeralStatic => {
-                responder_ephemeral
-                    .ok_or(HandshakeError::MissingResponderEphemeral)?
-                    .map_bytes(|bytes| symmetric_state.mix_hash(bytes));
-                responder_identity
-                    .ok_or(HandshakeError::MissingResponderIdentity)?
-                    .map_bytes(|bytes| symmetric_state.mix_hash(bytes));
+                symmetric_state.mix_hash(
+                    responder_ephemeral
+                        .ok_or(HandshakeError::MissingResponderEphemeral)?
+                        .as_ref(),
+                );
+                symmetric_state.mix_hash(
+                    responder_identity
+                        .ok_or(HandshakeError::MissingResponderIdentity)?
+                        .as_ref(),
+                );
             }
             PreMessageToken::None => {}
         }
@@ -339,21 +355,19 @@ where
                             [ErrorIdx::ExistingLocalEphemeral as usize]);
                     }
                     let ephemeral_privkey = KexAlgo::Private::from_random(csprng);
-                    let pubkey = KexAlgo::Public::from(&ephemeral_privkey);
-                    pubkey.map_bytes(|pubkey_bytes| {
-                        self.symmetric_state.mix_hash(pubkey_bytes);
-                        retval.extend_from_slice(pubkey_bytes);
-                    });
+                    let pubkey_bytes = KexAlgo::Public::from(&ephemeral_privkey).into();
+                    self.symmetric_state.mix_hash(&pubkey_bytes);
+                    retval.extend_from_slice(&pubkey_bytes);
                     self.local_ephemeral = Some(ephemeral_privkey);
                 }
                 // For "s"
                 Token::Static => {
-                    let pubkey = KexAlgo::Public::from(self.local_identity.as_ref().ok_or(
+                    let plaintext = KexAlgo::Public::from(self.local_identity.as_ref().ok_or(
                         HANDSHAKE_ERROR[self.is_initiator as usize]
                             [ErrorIdx::MissingLocalIdentity as usize],
-                    )?);
-                    let ciphertext =
-                        pubkey.map_bytes(|bytes| self.symmetric_state.encrypt_and_hash(bytes))?;
+                    )?)
+                    .into();
+                    let ciphertext = self.symmetric_state.encrypt_and_hash(&plaintext)?;
                     retval.extend_from_slice(&ciphertext);
                 }
                 // For "ee"
@@ -492,7 +506,7 @@ where
                     let decrypted_key_bytes = self
                         .symmetric_state
                         .decrypt_and_hash(&encrypted_key_bytes)?;
-                    let pubkey = KexAlgo::Public::try_from(&decrypted_key_bytes[..])
+                    let pubkey = KexAlgo::Public::try_from(&decrypted_key_bytes)
                         .map_err(|_e| HandshakeError::KeyParse)?;
                     self.remote_identity = Some(pubkey);
                 }
