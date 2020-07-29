@@ -47,6 +47,7 @@ commands:
             cargo --version
             rustup --version
             sccache --version
+            command -v jq && jq --version
 
   env_setup:
     description: Environment Setup
@@ -64,6 +65,9 @@ commands:
           name: Set utility environment variables
           command: |
             echo "export HOST_TARGET_TRIPLE=\"$(rustc -Vv | sed -n 's/^host: //p')\"" >> $BASH_ENV
+            packages="$(cargo metadata --format-version 1 --no-deps \
+              | jq -r '.packages|map(.name)|sort[]')"
+            echo "export WORKSPACE_PACKAGES=\"$packages\"" >> $BASH_ENV
 
   enable_sccache:
     description: Enabling sccache
@@ -220,6 +224,14 @@ commands:
             command -v cargo-cache >/dev/null || cargo install cargo-cache
             command -v cargo2junit >/dev/null || cargo install cargo2junit
 
+  install-ci-test-deps:
+    steps:
+      - run:
+          name: Install CI dependencies
+          command: |
+            command -v cargo-cache >/dev/null || cargo install cargo-cache
+            command -v cargo2junit >/dev/null || cargo install cargo2junit
+
   prefetch-cargo-deps:
     steps:
       - run:
@@ -244,19 +256,38 @@ commands:
       - restore-cargo-cache
       - install-ci-deps
       - env_setup
+      - print_versions
       - enable_sccache
       # Cache is only saved when building from master. We don't restore sccache on
       # master so that the cache is clean when saved.
-      - unless:
-          condition: { equal: [ << pipeline.git.branch >>, master ] }
-          steps: [ restore-sccache-cache ]
+#      - unless:
+#          condition: { equal: [ << pipeline.git.branch >>, master ] }
+#          steps: [ restore-sccache-cache ]
+      - prefetch-cargo-deps
+
+  prepare-for-testing:
+    parameters:
+      os:
+        type: enum
+        enum: ["linux", "macos", "windows"]
+        default: linux
+    steps:
+      - checkout
+      - when:
+          condition: { equal: [ << parameters.os >>, macos ] }
+          steps: [ restore-homebrew-cache ]
+      - install-rust
+      - restore-cargo-cache
+      - install-ci-test-deps
+      - env_setup
+      - print_versions
       - prefetch-cargo-deps
 
   run-tests:
     parameters:
       test_command:
         type: string
-        default: cargo test --frozen --target "$HOST_TARGET_TRIPLE"
+        default: cargo test --frozen --no-fail-fast --target "$HOST_TARGET_TRIPLE" --workspace --tests
     steps:
       - run:
           name: Run all tests
@@ -273,11 +304,67 @@ commands:
             # necessary because the conversion tool must parse all test output, including log
             # output, in order to parse the test results, and unfortunately Cargo does not always
             # output the test results in such a way that is cleanly parsable.
-            << parameters.test_command >> -- -Z unstable-options --format json --report-time \
+            << parameters.test_command >> -- \
+                -Z unstable-options --format json --report-time \
               | {
-                  tee /tmp/test-results/results.json
-                  cargo2junit \
-                    < /tmp/test-results/results.json \
+                  tee /tmp/test-results/output.log
+                  sed -n 's/^.*\({ "type": "[^}]* }\).*$/\1/p' \
+                    < /tmp/test-results/output.log \
+                    | cargo2junit \
+                    > /tmp/test-results/results.xml
+                  true
+                }
+
+  build-tests:
+    parameters:
+      test_command:
+        type: string
+        default: cargo test --frozen --no-fail-fast --target "$HOST_TARGET_TRIPLE" --workspace --tests
+    steps:
+      - run:
+          name: Build tests
+          environment:
+            CARGO_TARGET_DIR: /tmp/workspace/target
+          command: |
+            mkdir -p /tmp/workspace
+
+            # Build tests without running them and save the compilation results as json
+            << parameters.test_command >> --no-run --message-format json \
+              | tee >( \
+                jq 'select(.reason=="compiler-artifact" and .profile.test)' \
+                  > /tmp/workspace/test-build-artifacts.json \
+              )
+      - store_artifacts:
+          path: /tmp/workspace/test-build-artifacts.json
+
+  run-tests-in-parallel:
+    steps:
+      - run:
+          name: Run all tests
+          command: |
+            set -x
+
+            mkdir -p /tmp/test-results
+
+            # Get all test targets and filter using CircleCI's test splitting feature
+            selected_test_targets="$(cat /tmp/workspace/test-build-artifacts.json \
+              | jq -r '.target.name' | circleci tests split --show-counts)"
+            echo $'Running test targets:\n'"$selected_test_targets"
+
+            # Get the test executables corresponding to the test targets for this run
+            test_executables="$(cat /tmp/workspace/test-build-artifacts.json \
+              | jq -r 'select(.target.name | IN($targets|split("\n")[])).executable | @sh' \
+                --arg targets "$selected_test_targets")"
+            echo $'Executables:\n'"$test_executables"
+
+            # Run each test executable and collect the results in junit format
+            echo "$test_executables" \
+              | xargs -L1 -I{} bash -c '{} -Zunstable-options --format json --report-time' \
+              | {
+                  tee /tmp/test-results/output.log
+                  sed -n 's/^.*\({ "type": "[^}]* }\).*$/\1/p' \
+                    < /tmp/test-results/output.log \
+                    | cargo2junit \
                     > /tmp/test-results/results.xml
                   true
                 }
@@ -292,6 +379,34 @@ commands:
           path: /tmp/test-results
       - store_artifacts:
           path: /tmp/test-results
+
+  persist-target-dir:
+    steps:
+      - run:
+          name: Cleanup target dir
+          command: |
+            set -x
+
+            # Get list of test executables
+            test_executables="$(cat /tmp/workspace/test-build-artifacts.json | jq '.executable')"
+
+            echo "$test_executables\n\n"
+
+            # Remove everything in the target dir except for the test executables
+            find /tmp/workspace/target ! \( \
+              $(echo "$test_executables" | jq -sr 'map("-path \(.)") | join(" -or ")') \
+            \) -and \( ! -type d -or -empty \) -delete
+
+            du -a /tmp/workspace/target
+            du -a /tmp/workspace
+      - persist_to_workspace:
+          root: /tmp/workspace
+          paths: [ "target", "test-build-artifacts.json" ]
+
+  attach-target-dir:
+    steps:
+      - attach_workspace:
+          at: /tmp/workspace
 
   check-dirty-git:
     steps:
@@ -413,6 +528,36 @@ jobs:
           path: test-results
 
 
+  # A job that builds all the tests in the workspace and persists the target directory
+  # to the CircleCI workflow's workspace to be consumed by the run-tests jobs
+  build-tests:
+    executor: build-executor
+    environment:
+      <<: *default-environment
+    steps:
+      - prepare-for-building
+      - build-tests
+      - check-dirty-git
+#      - when:
+#          condition: { equal: [ << pipeline.git.branch >>, master ] }
+#          steps: [ save-sccache-cache ]
+      - save-sccache-cache
+      - post-build
+      - persist-target-dir
+
+  # Run all tests on a single container
+  run-tests-in-parallel:
+    executor: build-executor
+#    executor: test-executor
+    parallelism: 4
+    environment:
+      <<: *default-environment
+    steps:
+      - prepare-for-testing
+      - attach-target-dir
+      - run-tests-in-parallel
+      - post-test
+
   # Run all tests on a single container
   run-all-tests:
     executor: build-executor
@@ -507,19 +652,26 @@ workflows:
   # Build and run tests on a single container
   build-and-run-all-tests:
     jobs:
-      # Run tests on a single container
-      - run-all-tests
+      # Build tests in a single container and attach target dir to workspace
+      - build-tests
 
-      # Build everything in debug
-      - build-all-and-lint-debug
+      # Attach to workspace and run tests. Uses multiple parallel workers to split up the work
+      - run-tests-in-parallel:
+          requires: [ build-tests ]
 
-      # Build using macOS
-      - build-all-macos
+#      # Run tests on a single container
+#      - run-all-tests
+
+#      # Build everything in debug
+#      - build-all-and-lint-debug
+
+#      # Build using macOS
+#      - build-all-macos
 
   # Build and run tests in parallel - not needed at the moment since the test suite is fast enough.
   # build-and-run-tests:
   #   jobs:
   #     - build-parallel-tests
-  #     - run-parallel-tests:
+  #     - run-tests-in-parallel:
   #         requires:
   #           - build-parallel-tests
