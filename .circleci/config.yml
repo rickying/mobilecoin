@@ -229,7 +229,7 @@ commands:
             time cargo fetch --locked
             (cd consensus/enclave/trusted && time cargo fetch --locked)
 
-  prepare-for-build:
+  prepare-for-building:
     parameters:
       os:
         type: enum
@@ -251,10 +251,6 @@ commands:
           condition: { equal: [ << pipeline.git.branch >>, master ] }
           steps: [ restore-sccache-cache ]
       - prefetch-cargo-deps
-
-  post-build:
-    steps:
-      - record-sccache-cache-stats
 
   run-tests:
     parameters:
@@ -286,6 +282,10 @@ commands:
                   true
                 }
 
+  post-build:
+    steps:
+      - record-sccache-cache-stats
+
   post-test:
     steps:
       - store_test_results:
@@ -313,7 +313,7 @@ jobs:
     environment:
       <<: *default-environment
     steps:
-      - prepare-for-build
+      - prepare-for-building
       - run:
           name: Build/prepare unit tests
           command: |
@@ -420,7 +420,7 @@ jobs:
     environment:
       <<: *default-environment
     steps:
-      - prepare-for-build
+      - prepare-for-building
       - run-tests
       - check-dirty-git
       - when:
@@ -435,7 +435,7 @@ jobs:
     environment:
       << : *default-environment
     steps:
-      - prepare-for-build
+      - prepare-for-building
       - run:
           name: Cargo check (SW/IAS dev)
           command: cargo check --frozen
@@ -475,7 +475,7 @@ jobs:
       RUSTFLAGS: -D warnings -C target-cpu=penryn
       CONSENSUS_ENCLAVE_CSS: /Users/distiller/project/sgx/css/src/valid.css
     steps:
-      - prepare-for-build:
+      - prepare-for-building:
           os: macos
       - run:
           name: Cargo check (SW/IAS dev)
