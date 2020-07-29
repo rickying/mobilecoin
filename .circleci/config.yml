@@ -60,6 +60,10 @@ commands:
             if [ -f ~/.gitconfig ]; then
               sed -i -e 's/github/git-non-exist-hub/g' ~/.gitconfig # https://github.com/rust-lang/cargo/issues/3900
             fi
+      - run:
+          name: Set utility environment variables
+          command: |
+            echo "export HOST_TARGET_TRIPLE=\"$(rustc -Vv | sed -n 's/^host: //p')\"" >> $BASH_ENV
 
   enable_sccache:
     description: Enabling sccache
@@ -256,7 +260,7 @@ commands:
     parameters:
       test_command:
         type: string
-        default: cargo test --frozen
+        default: cargo test --frozen --target "$HOST_TARGET_TRIPLE"
     steps:
       - run:
           name: Run all tests
