@@ -14,7 +14,8 @@ lazy_static::lazy_static! {
     pub static ref PENDING_VALUE_PROCESSING_TIME: Histogram = register_histogram!(
         "pending_value_processing_time",
         "Time from receiving a value until it is externalized (in seconds)",
-        vec![.1, .2, .3, .4, .5, .6, .7, .8, .9, 1.0, 2.0, 3.0, 4.0, 5.0]
+        //vec![.1, .2, .3, .4, .5, .6, .7, .8, .9, 1.0, 2.0, 3.0, 4.0, 5.0]
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50]
     ).unwrap();
 }
 
